@@ -38,20 +38,23 @@ defmodule FinstaWeb.HomeLive do
   end
 
   @impl true
+  @spec mount(any(), any(), Phoenix.LiveView.Socket.t()) :: {:ok, any()}
   def mount(_params, _session, socket) do
     if  connected?(socket) do
-    form =
-      %Post{}
-      |> Post.changeset(%{})
-      |> to_form(as: "post")
+      Phoenix.PubSub.subscribe(Finsta.PubSub, "posts")
 
-    socket =
-      socket
-      |> assign(form: form, loading: false)
-      |> allow_upload(:image, accept: ~w(.png .jpg), max_entries: 1)
-      |> stream(:posts, Posts.list_posts())
+      form =
+        %Post{}
+        |> Post.changeset(%{})
+        |> to_form(as: "post")
 
-    {:ok, socket}
+      socket =
+        socket
+        |> assign(form: form, loading: false)
+        |> allow_upload(:image, accept: ~w(.png .jpg), max_entries: 1)
+        |> stream(:posts, Posts.list_posts())
+
+      {:ok, socket}
     else
       {:ok, assign(socket, loading: true) }
     end
@@ -71,17 +74,27 @@ defmodule FinstaWeb.HomeLive do
     |> Map.put("image_path", List.first(consume_files(socket)))
     |> Posts.save()
     |> case do
-      {:ok, _post} ->
+      {:ok, post} ->
         socket =
           socket
           |> put_flash(:info, "Post Created Successfully")
           |> push_navigate(to: ~p"/")
+
+        Phoenix.PubSub.broadcast(Finsta.PubSub, "posts", {:new,  Map.put(post, :user, user)})
 
         {:noreply, socket}
 
       {:error, _changeset} ->
         {:noreply, socket}
     end
+  end
+
+  def handle_info({:new, post}, socket) do
+    socket =
+      socket
+      |> put_flash(:info, "#{post.user.email} just posted")
+      |> stream_insert(:posts, post, at: 0)
+    {:noreply, socket}
   end
 
   defp consume_files(socket) do
